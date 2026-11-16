@@ -281,3 +281,208 @@ class AsesoriaEspecializada(Servicio):
     def describir(self):
         return (f"Asesoría '{self._nombre}' de {self._especialidad} "
                 f"(nivel {self._nivel}) - ${self._tarifa_hora:,.0f}/hora")
+# ======================================================================
+# RESERVA
+# ======================================================================
+"""Clase Reserva: integra cliente, servicio, duración y estado."""
+
+
+IMPUESTO_IVA = 0.19
+
+
+class Reserva(Entidad):
+    PENDIENTE = "PENDIENTE"
+    CONFIRMADA = "CONFIRMADA"
+    CANCELADA = "CANCELADA"
+    FALLIDA = "FALLIDA"
+
+    def _init_(self, cliente, servicio, horas):
+        if cliente is None or servicio is None or horas is None:
+            raise ParametroFaltanteError("Cliente, servicio y duración son obligatorios.")
+        if not isinstance(cliente, Cliente) or not isinstance(servicio, Servicio):
+            raise ReservaInvalidaError("Cliente o servicio de tipo incorrecto.")
+        self._cliente = cliente
+        self._servicio = servicio
+        self._horas = horas
+        self._estado = Reserva.PENDIENTE
+        self._costo = None
+        super()._init_()
+
+    @property
+    def estado(self):
+        return self._estado
+
+    @property
+    def costo(self):
+        return self._costo
+
+    def confirmar(self, descuento=0.0):
+        """Confirma la reserva usando try/except/else/finally y encadenamiento."""
+        if self._estado != Reserva.PENDIENTE:
+            raise OperacionNoPermitidaError(
+                f"No se puede confirmar una reserva en estado {self._estado}.")
+        try:
+            if not self._servicio.disponible:
+                raise ServicioNoDisponibleError(
+                    f"El servicio '{self._servicio.nombre}' no está disponible.")
+            costo = self._servicio.calcular_costo(self._horas, IMPUESTO_IVA, descuento)
+        except ErrorSoftwareFJ as causa:
+            self._estado = Reserva.FALLIDA
+            # Encadenamiento: la causa original queda enlazada con "from"
+            raise ReservaInvalidaError(
+                f"No se pudo confirmar la reserva #{self.id}.") from causa
+        else:
+            # Solo se ejecuta si no hubo excepción
+            self._costo = costo
+            self._estado = Reserva.CONFIRMADA
+            logger.info("Reserva #%s confirmada. Costo total: $%s", self.id, f"{costo:,.2f}")
+        finally:
+            # Se ejecuta siempre, haya o no error
+            logger.info("Fin del intento de confirmación de la reserva #%s (estado: %s)",
+                        self.id, self._estado)
+
+    def cancelar(self):
+        if self._estado in (Reserva.CANCELADA, Reserva.FALLIDA):
+            raise OperacionNoPermitidaError(
+                f"No se puede cancelar una reserva en estado {self._estado}.")
+        self._estado = Reserva.CANCELADA
+        logger.info("Reserva #%s cancelada.", self.id)
+
+    def describir(self):
+        costo = f"${self._costo:,.2f}" if self._costo is not None else "sin calcular"
+        return (f"Reserva #{self.id} [{self._estado}] - {self._cliente.nombre} | "
+                f"{self._servicio.nombre} | {self._horas} h | {costo}")
+
+
+# ======================================================================
+# SISTEMA GESTOR
+# ======================================================================
+"""Gestor central: administra las listas internas y captura los errores."""
+
+
+TIPOS_SERVICIO = {"sala": ReservaSala, "equipo": AlquilerEquipo,
+                  "asesoria": AsesoriaEspecializada}
+
+
+class SistemaFJ:
+    def _init_(self):
+        # Listas internas: el sistema no usa base de datos
+        self.clientes, self.servicios, self.reservas = [], [], []
+
+    def _ejecutar(self, descripcion, funcion):
+        """
+        Ejecuta una operación y garantiza que el programa NUNCA se detenga:
+        los errores se registran en el log y se informa en pantalla.
+        """
+        try:
+            resultado = funcion()
+        except ErrorSoftwareFJ as error:
+            causa = f" | causa: {error._cause}" if error.cause_ else ""
+            logger.error("%s -> %s: %s%s", descripcion, type(error)._name_, error, causa)
+            print(f"  [ERROR] {descripcion}: {error}{causa}")
+            return None
+        except Exception as error:  # cualquier error inesperado
+            logger.critical("%s -> error inesperado %s: %s",
+                            descripcion, type(error)._name_, error)
+            print(f"  [ERROR INESPERADO] {descripcion}: {error}")
+            return None
+        else:
+            logger.info("%s -> OK", descripcion)
+            print(f"  [OK] {descripcion}")
+            return resultado
+        finally:
+            logger.info("Operación finalizada: %s", descripcion)
+
+    def registrar_cliente(self, nombre, correo, telefono):
+        def operacion():
+            cliente = Cliente(nombre, correo, telefono)
+            self.clientes.append(cliente)
+            return cliente
+        return self._ejecutar(f"Registrar cliente {nombre!r}", operacion)
+
+    def crear_servicio(self, tipo, **datos):
+        def operacion():
+            clase = TIPOS_SERVICIO.get(tipo)
+            if clase is None:
+                raise ReservaInvalidaError(f"Tipo de servicio desconocido: {tipo!r}.")
+            servicio = clase(**datos)
+            self.servicios.append(servicio)
+            return servicio
+        return self._ejecutar(f"Crear servicio tipo {tipo!r}", operacion)
+
+    def crear_reserva(self, cliente, servicio, horas, descuento=0.0):
+        def operacion():
+            reserva = Reserva(cliente, servicio, horas)
+            self.reservas.append(reserva)
+            reserva.confirmar(descuento)
+            return reserva
+        nombre = getattr(servicio, "nombre", servicio)
+        return self._ejecutar(f"Crear reserva de {nombre!r} por {horas} h", operacion)
+
+    def cancelar_reserva(self, reserva):
+        return self._ejecutar(
+            f"Cancelar reserva #{getattr(reserva, 'id', '?')}", reserva.cancelar)
+
+    def resumen(self):
+        print("\n=== RESUMEN FINAL ===")
+        print(f"Clientes registrados : {len(self.clientes)}")
+        print(f"Servicios creados    : {len(self.servicios)}")
+        print(f"Reservas             : {len(self.reservas)}")
+        for r in self.reservas:
+            print("  -", r.describir())
+
+
+# ======================================================================
+# PROGRAMA PRINCIPAL
+# ======================================================================
+"""
+Software FJ - Sistema integral de gestión de clientes, servicios y reservas.
+Simula 12 operaciones (válidas e inválidas) para demostrar que el programa
+sigue funcionando ante errores. Los errores quedan en logs/software_fj.log
+"""
+
+
+
+def main():
+    fj = SistemaFJ()
+
+    print("--- Clientes ---")
+    ana = fj.registrar_cliente("Ana Torres", "ana.torres@correo.com", "3105551234")   # 1 válido
+    luis = fj.registrar_cliente("Luis Pérez", "luis@correo.com", "3201112233")        # 2 válido
+    fj.registrar_cliente("Pedro", "correo-sin-arroba", "3001234567")                  # 3 inválido: correo
+    fj.registrar_cliente("", "vacio@correo.com", "3001234567")                        # 4 inválido: falta nombre
+
+    print("\n--- Servicios ---")
+    sala = fj.crear_servicio("sala", nombre="Sala Innovación", tarifa_hora=80000, capacidad=12)       # 5 válido
+    equipo = fj.crear_servicio("equipo", nombre="Proyector 4K", tarifa_hora=15000,
+                               tipo_equipo="Proyector", deposito=50000)                               # 6 válido
+    asesoria = fj.crear_servicio("asesoria", nombre="Asesoría Python", tarifa_hora=120000,
+                                 especialidad="Desarrollo", nivel="senior")                           # 7 válido
+    fj.crear_servicio("sala", nombre="Sala Fantasma", tarifa_hora=-5, capacidad=10)                   # 8 inválido: tarifa
+    fj.crear_servicio("gimnasio", nombre="Gym")                                                       # 9 inválido: tipo
+
+    print("\n--- Reservas ---")
+    r1 = fj.crear_reserva(ana, sala, 3)                      # 10 exitosa
+    fj.crear_reserva(luis, equipo, 10, descuento=0.10)       # 11 exitosa con descuento
+    fj.crear_reserva(luis, asesoria, 20)                     # 12 fallida: duración inválida
+    asesoria.disponible = False
+    fj.crear_reserva(ana, asesoria, 2)                       # 13 fallida: servicio no disponible
+    fj.crear_reserva(None, sala, 2)                          # 14 fallida: falta cliente
+    fj.cancelar_reserva(r1)                                  # 15 cancelación válida
+    fj.cancelar_reserva(r1)                                  # 16 cancelación repetida (no permitida)
+
+    print("\n--- Sobrecarga de calcular_costo ---")
+    print("  Solo base            :", sala.calcular_costo(2))
+    print("  Con impuesto 19%     :", sala.calcular_costo(2, 0.19))
+    print("  Con impuesto y desc. :", sala.calcular_costo(2, 0.19, 0.10))
+
+    print("\n--- Polimorfismo: describir() ---")
+    for entidad in [ana, sala, equipo, asesoria] + fj.reservas[:1]:
+        print("  ", entidad.describir())
+
+    fj.resumen()
+    print("\nEl programa terminó sin interrupciones. Revise logs/software_fj.log")
+
+
+if _name_ == "_main_":
+    main()
