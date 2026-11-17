@@ -1,12 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 Software FJ - Sistema integral de gestión de clientes, servicios y reservas (archivo único).
-UNAD - Programación 213023 - Fase 4
+UNAD - Programación  - Fase 4
+Juan David Narvaz Arias
+Cristian David Moncada
 """
 
+#Libreria para escribir mensajes en un archivo de registro
 import logging
+# Libreria para trabajar con rutas y carpetas del sistema operativo
 import os
+# Libreria de expreciones regulares, se usa para validar el formato del correo
 import re
+# ABC me permite crear clases abstractas; abstactmethod marca metodos que las hijas deben implementar
 from abc import ABC, abstractmethod
 
 # ======================================================================
@@ -17,28 +23,34 @@ from abc import ABC, abstractmethod
 
 class ErrorSoftwareFJ(Exception):
     """Excepción base: todas las excepciones del sistema heredan de ella."""
+# Al heredar todas de esta clase, se puede capturar cualquier error del sistema con un solo except
 
 
+# Se lanza cuando un dato tiene formato o valor incorrecto 
 class DatoInvalidoError(ErrorSoftwareFJ):
     """Se recibió un dato con formato o valor incorrecto."""
 
-
+# Se lanza cuando falta un dato obligatorio 
 class ParametroFaltanteError(ErrorSoftwareFJ):
     """Falta un parámetro obligatorio (None o vacío)."""
 
 
+# Se lanza cuando se intenta una accion que el estado actual no le permite 
 class OperacionNoPermitidaError(ErrorSoftwareFJ):
     """La operación no es válida para el estado actual del objeto."""
 
 
+# Se lanza cuando se reserva un servicio marcado como no disponible 
 class ServicioNoDisponibleError(ErrorSoftwareFJ):
     """El servicio solicitado no está disponible."""
 
 
+# Se lanz cuando una reserva no se puede crear o procesar 
 class ReservaInvalidaError(ErrorSoftwareFJ):
     """La reserva no pudo crearse o procesarse correctamente."""
 
 
+# Se lanza cuando el calculo de costos da un resultado que no tiene sentido 
 class CalculoInconsistenteError(ErrorSoftwareFJ):
     """El cálculo de costos produjo un resultado inconsistente."""
 
@@ -54,9 +66,12 @@ RUTA_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                         "logs", "software_fj.log")
 
 
+# Funcion que prepara el logger, el objeto que escribe los mensajes en el archivo  
 def configurar_logger():
     """Crea (una sola vez) el logger que escribe errores y eventos."""
+    # Crea la carpeta logs/ si no existe; exist_ok=True evita el error si ya existe
     os.makedirs(os.path.dirname(RUTA_LOG), exist_ok=True)
+    # Crea el logger llamado ''software_fj''
     log = logging.getLogger("software_fj")
     if not log.handlers:  # evita duplicar handlers si se importa varias veces
         log.setLevel(logging.INFO)
